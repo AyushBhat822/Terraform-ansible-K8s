@@ -1,0 +1,82 @@
+- hosts: k8s-master
+  tasks:
+  - name: Docker in AWS
+    command: amazon-linux-extras install docker -y
+
+  - name: Start the docker services
+    service:
+      name: docker
+      state: started
+      enabled: yes
+  
+  - name: Configure repository for K8s
+    yum_repository:
+      description: kubernetes
+      name: kubernetes
+      baseurl: https://packages.cloud.google.com/yum/repos/kubernetes-el7-\$basearch
+      enabled: 1
+      gpgcheck: 1
+      repo_gpgcheck: 1
+      gpgkey: https://packages.cloud.google.com/yum/doc/yum-key.gpg https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
+      exclude: kubelet kubeadm kubectl
+    ignore_errors: yes
+ 
+  - name: Installing K8s packges
+    yum:
+      name: kubeadm
+      disable_excludes: kubernetes
+
+  - name: Installing K8s packges
+    yum:
+      name: kubelet
+      disable_excludes: kubernetes
+
+  - name: Installing K8s packges
+    yum:
+      name: kubectl
+      disable_excludes: kubernetes
+
+  - name: Enable kubelet services
+    command: systemctl enable --now kubelet
+
+  - name: Change docker drivers
+    copy:
+      dest: /etc/docker/daemon.json
+      content: '{
+  "exec-opts": ["native.cgroupdriver=systemd"]
+}'
+
+ 
+  - name: Start the docker services
+    service:
+      name: docker
+      state: restarted
+
+  - name: Download iproute-tc
+    yum:
+      name: iproute-tc
+
+  - name: Initialize the Kubernetes cluster using kubeadm
+    command: kubeadm init --pod-network-cidr=10.240.0.0/16 --ignore-preflight-errors=NumCPU --ignore-preflight-errors=Mem --node-name=master
+    ignore_errors: yes
+
+  - name: Setup kubeconfig 
+    shell:
+      cmd: mkdir -p $HOME/.kube
+
+  - shell:
+      cmd: cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+    ignore_errors: yes
+  - shell:
+      cmd:  sudo chown $(id -u):$(id -g) $HOME/.kube/config
+    ignore_errors: yes
+  - name: Network container Provider Flannel
+    command:  kubectl apply  -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
+
+  - name: Generate join command
+    command: kubeadm token create --print-join-command
+    register: join_command
+
+  - name: Copy join command to local file
+    local_action: copy content="{{ join_command.stdout_lines[0] }}" dest="/root/join_aws.sh"
+
